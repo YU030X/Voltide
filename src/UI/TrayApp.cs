@@ -24,6 +24,12 @@ namespace Voltide.UI
 
         // A second right-click replaces the popup instead of stacking another copy.
         private TrayMenuForm _menuForm;
+        private LowBatteryPopup _alertPopup;
+        private readonly LowBatteryMonitor _alertMonitor = new LowBatteryMonitor();
+        private IconTheme _iconTheme = IconTheme.Color;
+        private int _lowBatteryThreshold = 20;
+        private Icon _trayIcon;
+        private Icon _formIcon;
 
 
         internal static readonly Color MenuMuted = Color.FromArgb(135, 135, 135); // card status line
@@ -46,8 +52,15 @@ namespace Voltide.UI
             // force handle creation so cross-thread marshalling works immediately
             IntPtr handle = _form.Handle;
 
+            _iconTheme = LoadIconTheme();
+            _lowBatteryThreshold = LoadLowBatteryThreshold();
+
+            _trayIcon = IconFactory.ToIcon(32, _iconTheme);
+            _formIcon = IconFactory.ToIcon(32, _iconTheme);
+            _form.Icon = _formIcon;
+
             _tray = new NotifyIcon();
-            _tray.Icon = IconFactory.ToIcon(32);
+            _tray.Icon = _trayIcon;
             _tray.Text = "Voltide";   // Windows tooltip on hover
             _tray.Visible = true;
 
@@ -58,11 +71,15 @@ namespace Voltide.UI
             };
 
             _form.RefreshSeconds = LoadRefreshSeconds();
+            _form.IconTheme = _iconTheme;
+            _form.LowBatteryThreshold = _lowBatteryThreshold;
             _form.RefreshRateChanged += delegate
             {
                 SaveRefreshSeconds(_form.RefreshSeconds);
                 ApplyInterval();
             };
+            _form.IconThemeChanged += delegate { ApplyIconTheme(_form.IconTheme); };
+            _form.LowBatteryThresholdChanged += delegate { ApplyLowBatteryThreshold(_form.LowBatteryThreshold); };
 
             _timer = new System.Windows.Forms.Timer();
             _timer.Interval = _form.RefreshSeconds * 1000;
@@ -130,6 +147,147 @@ namespace Voltide.UI
             }
         }
 
+        private static IconTheme LoadIconTheme()
+        {
+            try
+            {
+                using (Microsoft.Win32.RegistryKey key =
+                       Microsoft.Win32.Registry.CurrentUser.OpenSubKey(SettingsKey, false))
+                {
+                    if (key == null) return IconTheme.Color;
+                    object raw = key.GetValue("IconTheme");
+                    if (raw == null) return IconTheme.Color;
+
+                    int v = Convert.ToInt32(raw);
+                    if (v == (int)IconTheme.Light) return IconTheme.Light;
+                    if (v == (int)IconTheme.Dark) return IconTheme.Dark;
+                    return IconTheme.Color;
+                }
+            }
+            catch
+            {
+                return IconTheme.Color;
+            }
+        }
+
+        private static void SaveIconTheme(IconTheme theme)
+        {
+            try
+            {
+                using (Microsoft.Win32.RegistryKey key =
+                       Microsoft.Win32.Registry.CurrentUser.CreateSubKey(SettingsKey))
+                {
+                    if (key != null) key.SetValue("IconTheme", (int)theme);
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        private static int LoadLowBatteryThreshold()
+        {
+            try
+            {
+                using (Microsoft.Win32.RegistryKey key =
+                       Microsoft.Win32.Registry.CurrentUser.OpenSubKey(SettingsKey, false))
+                {
+                    if (key == null) return 20;
+                    object raw = key.GetValue("LowBatteryThreshold");
+                    if (raw == null) return 20;
+
+                    int v = Convert.ToInt32(raw);
+                    return NormalizeThreshold(v);
+                }
+            }
+            catch
+            {
+                return 20;
+            }
+        }
+
+        private static void SaveLowBatteryThreshold(int threshold)
+        {
+            try
+            {
+                using (Microsoft.Win32.RegistryKey key =
+                       Microsoft.Win32.Registry.CurrentUser.CreateSubKey(SettingsKey))
+                {
+                    if (key != null) key.SetValue("LowBatteryThreshold", threshold);
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        private static int NormalizeThreshold(int value)
+        {
+            if (value <= 0) return 0;
+            if (value < 5) return 5;
+            if (value > 50) return 50;
+            return ((value + 2) / 5) * 5;
+        }
+
+        private void ApplyIconTheme(IconTheme theme)
+        {
+            _iconTheme = theme;
+            SaveIconTheme(theme);
+            _form.IconTheme = theme;
+
+            Icon nextTray = IconFactory.ToIcon(32, theme);
+            Icon oldTray = _trayIcon;
+            _trayIcon = nextTray;
+            _tray.Icon = nextTray;
+            if (oldTray != null) oldTray.Dispose();
+
+            Icon nextForm = IconFactory.ToIcon(32, theme);
+            Icon oldForm = _formIcon;
+            _formIcon = nextForm;
+            _form.Icon = nextForm;
+            if (oldForm != null) oldForm.Dispose();
+        }
+
+        private void ApplyLowBatteryThreshold(int threshold)
+        {
+            int normalized = NormalizeThreshold(threshold);
+            _lowBatteryThreshold = normalized;
+            SaveLowBatteryThreshold(normalized);
+            _form.LowBatteryThreshold = normalized;
+
+            if (normalized <= 0 && _alertPopup != null && _alertPopup.Visible)
+            {
+                _alertPopup.Dismiss();
+            }
+
+            CheckLowBattery(_manager.Snapshot());
+        }
+
+        private void CheckLowBattery(List<DeviceSnapshot> snaps)
+        {
+            if (_lowBatteryThreshold <= 0 || snaps == null) return;
+
+            List<DeviceSnapshot> visible = new List<DeviceSnapshot>();
+            foreach (DeviceSnapshot s in snaps)
+            {
+                if (s == null || s.Info == null || s.Reading == null) continue;
+                if (!s.Reading.Online && !s.Reading.Sleeping) continue;
+                visible.Add(s);
+            }
+
+            List<DeviceSnapshot> merged = MainForm.CollapseTransports(visible);
+            List<LowBatteryAlert> alerts = _alertMonitor.Evaluate(merged, _lowBatteryThreshold);
+            if (alerts.Count == 0) return;
+
+            if (_alertPopup == null || _alertPopup.IsDisposed)
+            {
+                _alertPopup = new LowBatteryPopup();
+                _alertPopup.PanelRequested += delegate { ShowPanel(); };
+            }
+
+            _alertPopup.ShowAlerts(alerts, _lowBatteryThreshold);
+        }
+
         /// <summary>
         /// Opens the popup to the upper-right of the cursor, in a borderless window of
         /// our own so the size, the corners and the dismissal are all under our control.
@@ -157,9 +315,13 @@ namespace Voltide.UI
 
             panel.AutostartEnabled = Autostart.IsSupported();
             panel.AutostartOn = Autostart.IsSupported() && Autostart.IsEnabled();
+            panel.IconTheme = _iconTheme;
+            panel.LowBatteryThreshold = _lowBatteryThreshold;
 
             MenuPanel captured = panel;
             panel.AutostartToggled += delegate { Autostart.Set(captured.AutostartOn); };
+            panel.IconThemeChanged += delegate { ApplyIconTheme(captured.IconTheme); };
+            panel.LowBatteryThresholdChanged += delegate { ApplyLowBatteryThreshold(captured.LowBatteryThreshold); };
 
             form.Controls.Add(panel);
 
@@ -293,9 +455,11 @@ namespace Voltide.UI
 
                 try
                 {
+                    List<DeviceSnapshot> snaps = _manager.Snapshot();
                     _form.BeginInvoke(new MethodInvoker(delegate
                     {
-                        _form.UpdateSnapshot(_manager.Snapshot());
+                        _form.UpdateSnapshot(snaps);
+                        CheckLowBattery(snaps);
                     }));
                 }
                 catch
@@ -331,10 +495,30 @@ namespace Voltide.UI
                 _timer.Dispose();
             }
 
+            if (_alertPopup != null && !_alertPopup.IsDisposed)
+            {
+                try { _alertPopup.Close(); } catch { }
+                _alertPopup.Dispose();
+                _alertPopup = null;
+            }
+
             if (_tray != null)
             {
                 _tray.Visible = false;
+                _tray.Icon = null;
                 _tray.Dispose();
+            }
+
+            if (_trayIcon != null)
+            {
+                _trayIcon.Dispose();
+                _trayIcon = null;
+            }
+
+            if (_formIcon != null)
+            {
+                _formIcon.Dispose();
+                _formIcon = null;
             }
 
         }

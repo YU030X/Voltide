@@ -8,9 +8,17 @@ using System.Runtime.InteropServices;
 
 namespace Voltide.UI
 {
+    public enum IconTheme
+    {
+        Color = 0,
+        Light = 1,
+        Dark = 2
+    }
+
     /// <summary>
-    /// Renders Logo.svg (256 x 256: a green rounded plate with the bolt cut out in
-    /// dark violet) at any size, and packs the results into a multi-size .ico.
+    /// Renders Logo.svg (256 x 256: a rounded plate with the bolt cut out) at any
+    /// size, and packs the results into a multi-size .ico. Supports color and
+    /// monochrome (light / dark) tray icon themes.
     ///
     /// Drawn rather than downscaled from one bitmap: the tray asks for 16 px at 100%
     /// and 32 px at 200%, and a single 256 px source blurred badly at 16.
@@ -45,8 +53,16 @@ namespace Voltide.UI
             Color.Black
         };
 
+        private static readonly Color ColorPlate = Color.FromArgb(116, 221, 124);
+        private static readonly Color LightPlate = Color.FromArgb(0xF2, 0xF2, 0xF2);
+        private static readonly Color LightBolt = Color.FromArgb(0x12, 0x12, 0x12);
+        private static readonly Color DarkPlate = Color.FromArgb(0x14, 0x14, 0x14);
+        private static readonly Color DarkBolt = Color.FromArgb(0xF5, 0xF5, 0xF5);
+        private static readonly Color DarkBorder = Color.FromArgb(110, 255, 255, 255);
+
         private static GraphicsPath _bolt;
         private static GraphicsPath _plate;
+        private static GraphicsPath _innerPlate;
 
         private static void EnsurePaths()
         {
@@ -54,10 +70,37 @@ namespace Voltide.UI
 
             _bolt = SvgPath.Parse(BoltPath);
             _plate = RoundRect(0f, 0f, 256f, 256f, 50f);
+            _innerPlate = RoundRect(6f, 6f, 244f, 244f, 44f);
         }
 
-        /// <summary>Draws the logo at the requested pixel size.</summary>
+        public static string ThemeLabel(IconTheme theme)
+        {
+            switch (theme)
+            {
+                case IconTheme.Light: return "白黑";
+                case IconTheme.Dark: return "黑白";
+                default: return "彩色";
+            }
+        }
+
+        public static IconTheme NextTheme(IconTheme theme)
+        {
+            switch (theme)
+            {
+                case IconTheme.Color: return IconTheme.Light;
+                case IconTheme.Light: return IconTheme.Dark;
+                default: return IconTheme.Color;
+            }
+        }
+
+        /// <summary>Draws the logo at the requested pixel size using the default color theme.</summary>
         public static Bitmap Render(int size)
+        {
+            return Render(size, IconTheme.Color);
+        }
+
+        /// <summary>Draws the logo at the requested pixel size and theme.</summary>
+        public static Bitmap Render(int size, IconTheme theme)
         {
             EnsurePaths();
 
@@ -73,24 +116,50 @@ namespace Voltide.UI
                 float k = size / 256f;
                 g.ScaleTransform(k, k);
 
-                using (SolidBrush green = new SolidBrush(Color.FromArgb(116, 221, 124)))
+                Color plateColor;
+                if (theme == IconTheme.Light) plateColor = LightPlate;
+                else if (theme == IconTheme.Dark) plateColor = DarkPlate;
+                else plateColor = ColorPlate;
+
+                using (SolidBrush plateBrush = new SolidBrush(plateColor))
                 {
-                    g.FillPath(green, _plate);
+                    g.FillPath(plateBrush, _plate);
                 }
 
                 GraphicsState state = g.Save();
                 g.SetClip(_plate);
 
-                using (LinearGradientBrush grad = new LinearGradientBrush(
-                    new PointF(32.18f, 320.43f), new PointF(344.18f, -267.28f),
-                    Color.Black, Color.Black))
+                if (theme == IconTheme.Light)
                 {
-                    ColorBlend blend = new ColorBlend();
-                    blend.Positions = Stops;
-                    blend.Colors = Colors;
-                    grad.InterpolationColors = blend;
+                    using (SolidBrush boltBrush = new SolidBrush(LightBolt))
+                    {
+                        g.FillPath(boltBrush, _bolt);
+                    }
+                }
+                else if (theme == IconTheme.Dark)
+                {
+                    using (SolidBrush boltBrush = new SolidBrush(DarkBolt))
+                    {
+                        g.FillPath(boltBrush, _bolt);
+                    }
+                    using (Pen borderPen = new Pen(DarkBorder, 12f))
+                    {
+                        g.DrawPath(borderPen, _innerPlate);
+                    }
+                }
+                else
+                {
+                    using (LinearGradientBrush grad = new LinearGradientBrush(
+                        new PointF(32.18f, 320.43f), new PointF(344.18f, -267.28f),
+                        Color.Black, Color.Black))
+                    {
+                        ColorBlend blend = new ColorBlend();
+                        blend.Positions = Stops;
+                        blend.Colors = Colors;
+                        grad.InterpolationColors = blend;
 
-                    g.FillPath(grad, _bolt);
+                        g.FillPath(grad, _bolt);
+                    }
                 }
 
                 g.Restore(state);
@@ -101,7 +170,12 @@ namespace Voltide.UI
 
         public static Icon ToIcon(int size)
         {
-            using (Bitmap bmp = Render(size))
+            return ToIcon(size, IconTheme.Color);
+        }
+
+        public static Icon ToIcon(int size, IconTheme theme)
+        {
+            using (Bitmap bmp = Render(size, theme))
             {
                 IntPtr handle = bmp.GetHicon();
                 Icon icon = (Icon)Icon.FromHandle(handle).Clone();

@@ -1130,6 +1130,45 @@ namespace Voltide.UI
         private static readonly float[] RadioTx = { 401.51f, 470.5f, 539.49f };
 
         public event EventHandler RefreshRateChanged;
+        public event EventHandler IconThemeChanged;
+        public event EventHandler LowBatteryThresholdChanged;
+
+        private IconTheme _iconTheme = IconTheme.Color;
+        private int _lowBatteryThreshold = 20;
+        private int _lastNonZeroThreshold = 20;
+        private int _bottomHot;
+
+        public IconTheme IconTheme
+        {
+            get { return _iconTheme; }
+            set
+            {
+                if (_iconTheme == value) return;
+                _iconTheme = value;
+                Invalidate();
+            }
+        }
+
+        public int LowBatteryThreshold
+        {
+            get { return _lowBatteryThreshold; }
+            set
+            {
+                int v = NormalizeThreshold(value);
+                if (_lowBatteryThreshold == v) return;
+                _lowBatteryThreshold = v;
+                if (v > 0) _lastNonZeroThreshold = v;
+                Invalidate();
+            }
+        }
+
+        private static int NormalizeThreshold(int value)
+        {
+            if (value <= 0) return 0;
+            if (value < 5) return 5;
+            if (value > 50) return 50;
+            return ((value + 2) / 5) * 5;
+        }
 
         /// <summary>Seconds between polls while the panel is open.</summary>
         public int RefreshSeconds
@@ -1213,6 +1252,136 @@ namespace Voltide.UI
                     }
                 }
             }
+
+            DrawBottomSettings(g);
+        }
+
+        private void DrawBottomSettings(Graphics g)
+        {
+            float s = _scale;
+            float baseline = 528.29f * s;
+            float cy = 522.98f * s;
+
+            Color muted = Color.FromArgb(135, 135, 135);
+            Color soft = Color.FromArgb(204, 204, 204);
+            Color dim = Color.FromArgb(80, 80, 80);
+
+            Font cnFont = FontManager.Get(FontKind.Chinese, 14f * s);
+            Font numFont = FontManager.Get(FontKind.MontserratMedium, 15f * s);
+
+            using (StringFormat sfCn = new StringFormat())
+            {
+                sfCn.FormatFlags |= StringFormatFlags.NoWrap;
+                using (SolidBrush lb = new SolidBrush(muted))
+                {
+                    g.DrawString("低电提醒", cnFont, lb,
+                                 44.87f * s, baseline - FontManager.Ascent(cnFont), sfCn);
+                }
+            }
+
+            float minusX = 124f * s;
+            float valCenterX = 158f * s;
+            float plusX = 192f * s;
+            float arm = 3.5f * s;
+
+            Color minusCol = _lowBatteryThreshold <= 0 ? dim : (_bottomHot == 1 ? Color.White : muted);
+            using (Pen mp = new Pen(minusCol, Math.Max(1.3f, 1.4f * s)))
+            {
+                mp.StartCap = LineCap.Round;
+                mp.EndCap = LineCap.Round;
+                g.DrawLine(mp, minusX - arm, cy, minusX + arm, cy);
+            }
+
+            Color plusCol = _lowBatteryThreshold >= 50 ? dim : (_bottomHot == 3 ? Color.White : muted);
+            using (Pen pp = new Pen(plusCol, Math.Max(1.3f, 1.4f * s)))
+            {
+                pp.StartCap = LineCap.Round;
+                pp.EndCap = LineCap.Round;
+                g.DrawLine(pp, plusX - arm, cy, plusX + arm, cy);
+                g.DrawLine(pp, plusX, cy - arm, plusX, cy + arm);
+            }
+
+            if (_lowBatteryThreshold > 0)
+            {
+                string val = _lowBatteryThreshold + "%";
+                using (StringFormat sfNum = new StringFormat(StringFormat.GenericTypographic))
+                {
+                    sfNum.FormatFlags |= StringFormatFlags.NoWrap;
+                    float vw = g.MeasureString(val, numFont, int.MaxValue, sfNum).Width;
+                    Color vc = _bottomHot == 2 ? Color.White : CardRenderer.Accent;
+                    using (SolidBrush vb = new SolidBrush(vc))
+                    {
+                        g.DrawString(val, numFont, vb, valCenterX - vw * 0.5f,
+                                     baseline - FontManager.Ascent(numFont), sfNum);
+                    }
+                }
+            }
+            else
+            {
+                string off = "关闭";
+                using (StringFormat sfOff = new StringFormat())
+                {
+                    sfOff.FormatFlags |= StringFormatFlags.NoWrap;
+                    float ow = g.MeasureString(off, cnFont, int.MaxValue, sfOff).Width;
+                    Color oc = _bottomHot == 2 ? soft : muted;
+                    using (SolidBrush ob = new SolidBrush(oc))
+                    {
+                        g.DrawString(off, cnFont, ob, valCenterX - ow * 0.5f,
+                                     baseline - FontManager.Ascent(cnFont), sfOff);
+                    }
+                }
+            }
+
+            string themeName = IconFactory.ThemeLabel(_iconTheme);
+            using (StringFormat sfCn = new StringFormat())
+            {
+                sfCn.FormatFlags |= StringFormatFlags.NoWrap;
+                float themeW = g.MeasureString(themeName, cnFont, int.MaxValue, sfCn).Width;
+                float labelW = g.MeasureString("图标", cnFont, int.MaxValue, sfCn).Width;
+                float rightEdge = Width - 53f * s;
+                float themeX = rightEdge - themeW;
+                float iconSize = 14f * s;
+                float iconX = themeX - 6f * s - iconSize;
+                float iconY = cy - iconSize * 0.5f;
+                float labelX = iconX - 8f * s - labelW;
+
+                using (SolidBrush lb = new SolidBrush(_bottomHot == 4 ? soft : muted))
+                {
+                    g.DrawString("图标", cnFont, lb,
+                                 labelX, baseline - FontManager.Ascent(cnFont), sfCn);
+                }
+
+                int iconPx = Math.Max(14, (int)Math.Round(iconSize));
+                using (Bitmap preview = IconFactory.Render(iconPx, _iconTheme))
+                {
+                    g.DrawImage(preview, iconX, iconY, iconSize, iconSize);
+                }
+
+                using (SolidBrush tb = new SolidBrush(_bottomHot == 4 ? Color.White : soft))
+                {
+                    g.DrawString(themeName, cnFont, tb,
+                                 themeX, baseline - FontManager.Ascent(cnFont), sfCn);
+                }
+            }
+        }
+
+        private int BottomHit(int x, int y)
+        {
+            if (ShowDots) return 0;
+
+            float s = _scale;
+            if (y < 505f * s || y > 545f * s) return 0;
+
+            float ax = x / s;
+            if (ax >= 110f && ax < 138f) return 1;
+            if (ax >= 138f && ax < 178f) return 2;
+            if (ax >= 178f && ax <= 206f) return 3;
+
+            float rightStart = Width / s - 150f;
+            float rightEnd = Width / s - 45f;
+            if (ax >= rightStart && ax <= rightEnd) return 4;
+
+            return 0;
         }
 
         /// <summary>Linear colour interpolation; t is clamped by the caller.</summary>
@@ -1440,6 +1609,8 @@ namespace Voltide.UI
             base.OnMouseMove(e);
 
             int over = HitIcon(e.X, e.Y);
+            int rateHot = ShowDots ? -1 : RefreshHit(e.X, e.Y);
+            int bottomHot = BottomHit(e.X, e.Y);
 
             bool hotRefresh = over == IconRefresh;
             bool hotClose = over == IconClose;
@@ -1448,9 +1619,18 @@ namespace Voltide.UI
             {
                 _hotRefresh = hotRefresh;
                 _hotClose = hotClose;
-                Cursor = (over == IconNone) ? Cursors.Default : Cursors.Hand;
                 StartAnimating();
             }
+
+            if (bottomHot != _bottomHot)
+            {
+                _bottomHot = bottomHot;
+                int topY = (int)(500f * _scale);
+                Invalidate(new Rectangle(0, topY, Width, Math.Max(1, Height - topY)));
+            }
+
+            bool hand = over != IconNone || rateHot >= 0 || bottomHot != 0;
+            Cursor = hand ? Cursors.Hand : Cursors.Default;
 
             if (!_dragging) return;
 
@@ -1470,7 +1650,7 @@ namespace Voltide.UI
             // The radio strip is not a drag handle. Without this the click starts a
             // window drag, and OnMouseUp then sees wasDragging=true and drops the
             // selection — the picker looked frozen.
-            if (RefreshHit(e.X, e.Y) >= 0) return;
+            if (RefreshHit(e.X, e.Y) >= 0 || BottomHit(e.X, e.Y) != 0) return;
 
             int over = HitIcon(e.X, e.Y);
             if (over == IconNone)
@@ -1500,11 +1680,44 @@ namespace Voltide.UI
                 _pressClose = false;
 
                 int rateHit = wasDragging ? -1 : RefreshHit(e.X, e.Y);
+                int bottomHit = wasDragging ? 0 : BottomHit(e.X, e.Y);
 
                 if (rateHit >= 0)
                 {
                     RefreshSeconds = RefreshOptions[rateHit];
                     if (RefreshRateChanged != null) RefreshRateChanged(this, EventArgs.Empty);
+                }
+                else if (bottomHit == 1)
+                {
+                    int next = _lowBatteryThreshold <= 5 ? 0 : _lowBatteryThreshold - 5;
+                    if (next != _lowBatteryThreshold)
+                    {
+                        LowBatteryThreshold = next;
+                        if (LowBatteryThresholdChanged != null) LowBatteryThresholdChanged(this, EventArgs.Empty);
+                    }
+                }
+                else if (bottomHit == 2)
+                {
+                    int next = _lowBatteryThreshold > 0 ? 0 : _lastNonZeroThreshold;
+                    if (next != _lowBatteryThreshold)
+                    {
+                        LowBatteryThreshold = next;
+                        if (LowBatteryThresholdChanged != null) LowBatteryThresholdChanged(this, EventArgs.Empty);
+                    }
+                }
+                else if (bottomHit == 3)
+                {
+                    int next = _lowBatteryThreshold <= 0 ? 5 : Math.Min(50, _lowBatteryThreshold + 5);
+                    if (next != _lowBatteryThreshold)
+                    {
+                        LowBatteryThreshold = next;
+                        if (LowBatteryThresholdChanged != null) LowBatteryThresholdChanged(this, EventArgs.Empty);
+                    }
+                }
+                else if (bottomHit == 4)
+                {
+                    IconTheme = IconFactory.NextTheme(_iconTheme);
+                    if (IconThemeChanged != null) IconThemeChanged(this, EventArgs.Empty);
                 }
                 else if (!wasDragging && over == IconRefresh) TryRefresh();
                 else if (!wasDragging && over == IconClose) Hide();
@@ -1518,6 +1731,12 @@ namespace Voltide.UI
             _hotClose = false;
             _pressRefresh = false;
             _pressClose = false;
+            if (_bottomHot != 0)
+            {
+                _bottomHot = 0;
+                int topY = (int)(500f * _scale);
+                Invalidate(new Rectangle(0, topY, Width, Math.Max(1, Height - topY)));
+            }
             Cursor = Cursors.Default;
             StartAnimating();
         }

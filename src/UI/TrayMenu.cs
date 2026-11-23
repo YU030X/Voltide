@@ -93,11 +93,18 @@ namespace Voltide.UI
 
         public event EventHandler QuitRequested;
         public event EventHandler AutostartToggled;
+        public event EventHandler IconThemeChanged;
+        public event EventHandler LowBatteryThresholdChanged;
 
         private bool _autostartOn;
         private float _switchT;                                  // 0 = off, 1 = on (animated)
         private System.Windows.Forms.Timer _switchAnim;
         private bool _autostartEnabled = true;
+
+        private IconTheme _iconTheme = IconTheme.Color;
+        private int _lowBatteryThreshold = 20;
+        private int _lastNonZeroThreshold = 20;
+        private int _alertSubHot;                                // 0 = none, 1 = minus, 2 = value, 3 = plus
 
         /// <summary>Current switch position, read back by the host when it saves.</summary>
         public bool AutostartOn
@@ -110,7 +117,25 @@ namespace Voltide.UI
         /// where writing a Run entry would point at powershell.exe instead.</summary>
         public bool AutostartEnabled { get { return _autostartEnabled; } set { _autostartEnabled = value; } }
 
-        public int LineCount { get { return _rows.Count + 2; } }   // + autostart + quit
+        public IconTheme IconTheme
+        {
+            get { return _iconTheme; }
+            set { _iconTheme = value; Invalidate(); }
+        }
+
+        public int LowBatteryThreshold
+        {
+            get { return _lowBatteryThreshold; }
+            set
+            {
+                int v = NormalizeThreshold(value);
+                _lowBatteryThreshold = v;
+                if (v > 0) _lastNonZeroThreshold = v;
+                Invalidate();
+            }
+        }
+
+        public int LineCount { get { return _rows.Count + 4; } }   // + icon theme + low battery + autostart + quit
 
         public MenuPanel(List<MenuRow> rows, float scale,
                          Font nameFont, Font valueFont, Font cnFont, Font markFont)
@@ -121,7 +146,7 @@ namespace Voltide.UI
             _valueFont = valueFont;
             _cnFont = cnFont;
             _markFont = markFont;
-            _hover = new float[rows.Count + 2];
+            _hover = new float[rows.Count + 4];
 
             SetStyle(ControlStyles.OptimizedDoubleBuffer
                      | ControlStyles.AllPaintingInWmPaint
@@ -162,11 +187,14 @@ namespace Voltide.UI
         protected override void OnMouseMove(MouseEventArgs e)
         {
             int hit = RowAt(e.Y);
-            if (hit != _hot)
+            int subHot = hit == _rows.Count + 1 ? HitAlertSub(e.X) : 0;
+            if (hit != _hot || subHot != _alertSubHot)
             {
                 _hot = hit;
-                Cursor = (hit >= _rows.Count && hit <= _rows.Count + 1) ? Cursors.Hand : Cursors.Default;
+                _alertSubHot = subHot;
+                Cursor = (hit >= _rows.Count && hit < LineCount) ? Cursors.Hand : Cursors.Default;
                 StartAnim();
+                Invalidate();
             }
             base.OnMouseMove(e);
         }
@@ -174,6 +202,7 @@ namespace Voltide.UI
         protected override void OnMouseLeave(EventArgs e)
         {
             _hot = -1;
+            _alertSubHot = 0;
             Cursor = Cursors.Default;
             StartAnim();
             base.OnMouseLeave(e);
@@ -185,19 +214,67 @@ namespace Voltide.UI
 
             int hit = RowAt(e.Y);
 
-            if (hit == _rows.Count && _autostartEnabled)
+            if (hit == _rows.Count)
+            {
+                _iconTheme = IconFactory.NextTheme(_iconTheme);
+                Invalidate();
+                if (IconThemeChanged != null) IconThemeChanged(this, EventArgs.Empty);
+            }
+            else if (hit == _rows.Count + 1)
+            {
+                int sub = HitAlertSub(e.X);
+                int next = _lowBatteryThreshold;
+                if (sub == 1)
+                {
+                    next = _lowBatteryThreshold <= 5 ? 0 : _lowBatteryThreshold - 5;
+                }
+                else if (sub == 3)
+                {
+                    next = _lowBatteryThreshold <= 0 ? 5 : Math.Min(50, _lowBatteryThreshold + 5);
+                }
+                else if (sub == 2)
+                {
+                    next = _lowBatteryThreshold > 0 ? 0 : _lastNonZeroThreshold;
+                }
+
+                if (next != _lowBatteryThreshold)
+                {
+                    _lowBatteryThreshold = next;
+                    if (next > 0) _lastNonZeroThreshold = next;
+                    Invalidate();
+                    if (LowBatteryThresholdChanged != null) LowBatteryThresholdChanged(this, EventArgs.Empty);
+                }
+            }
+            else if (hit == _rows.Count + 2 && _autostartEnabled)
             {
                 // Autostart row: flip the switch and let the host write the Run entry.
                 _autostartOn = !_autostartOn;
                 StartSwitchAnim();
                 if (AutostartToggled != null) AutostartToggled(this, EventArgs.Empty);
             }
-            else if (hit == _rows.Count + 1)
+            else if (hit == _rows.Count + 3)
             {
                 if (QuitRequested != null) QuitRequested(this, EventArgs.Empty);
             }
 
             base.OnMouseClick(e);
+        }
+
+        private int HitAlertSub(int x)
+        {
+            float ax = x / _scale;
+            if (ax >= 150f && ax < 178f) return 1;
+            if (ax >= 178f && ax < 224f) return 2;
+            if (ax >= 224f && ax <= 255f) return 3;
+            return 0;
+        }
+
+        private static int NormalizeThreshold(int value)
+        {
+            if (value <= 0) return 0;
+            if (value < 5) return 5;
+            if (value > 50) return 50;
+            return ((value + 2) / 5) * 5;
         }
 
         private void StartAnim()
@@ -312,10 +389,12 @@ namespace Voltide.UI
             float top = RowTop(index) * s;
             float h = RowH * s;
 
-            // Row order: devices..., autostart, quit.
-            bool isAutostart = index == _rows.Count;
-            bool isQuit = index == _rows.Count + 1;
-            MenuRow row = (isQuit || isAutostart) ? null : _rows[index];
+            // Row order: devices..., icon theme, low-battery alert, autostart, quit.
+            bool isIconTheme = index == _rows.Count;
+            bool isAlert = index == _rows.Count + 1;
+            bool isAutostart = index == _rows.Count + 2;
+            bool isQuit = index == _rows.Count + 3;
+            MenuRow row = (isIconTheme || isAlert || isQuit || isAutostart) ? null : _rows[index];
 
             // hover wash, kept faint so the grid stays intact
             float hover = _hover[index];
@@ -341,6 +420,98 @@ namespace Voltide.UI
             using (StringFormat sf = new StringFormat(StringFormat.GenericTypographic))
             {
                 sf.FormatFlags |= StringFormatFlags.NoWrap;
+
+                if (isIconTheme)
+                {
+                    using (SolidBrush brush = new SolidBrush(Lift(Soft, lift)))
+                    {
+                        g.DrawString("图标风格", _cnFont, brush, TextX * s,
+                                     top + CjkBaseline * s - FontManager.Ascent(_cnFont), sf);
+                    }
+
+                    int previewPx = Math.Max(12, (int)Math.Round(12f * s));
+                    float previewSize = 12f * s;
+                    float previewX = 200f * s;
+                    float previewY = top + (RowH - 12f) * 0.5f * s;
+                    using (Bitmap preview = IconFactory.Render(previewPx, _iconTheme))
+                    {
+                        g.DrawImage(preview, previewX, previewY, previewSize, previewSize);
+                    }
+
+                    string themeName = IconFactory.ThemeLabel(_iconTheme);
+                    Font themeFont = FontManager.Get(FontKind.Chinese, 15f * s);
+                    using (SolidBrush tb = new SolidBrush(Lift(Soft, lift)))
+                    {
+                        g.DrawString(themeName, themeFont, tb, 217f * s,
+                                     top + 20f * s - FontManager.Ascent(themeFont), sf);
+                    }
+                    return;
+                }
+
+                if (isAlert)
+                {
+                    using (SolidBrush brush = new SolidBrush(Lift(Soft, lift)))
+                    {
+                        g.DrawString("低电提醒", _cnFont, brush, TextX * s,
+                                     top + CjkBaseline * s - FontManager.Ascent(_cnFont), sf);
+                    }
+
+                    float midY = top + RowH * 0.5f * s;
+                    float minusX = 165f * s;
+                    float plusX = 236f * s;
+                    float halfArm = 3.5f * s;
+
+                    Color minusCol = _lowBatteryThreshold <= 0
+                        ? Color.FromArgb(80, 80, 80)
+                        : (_alertSubHot == 1 ? Color.White : Muted);
+                    using (Pen mp = new Pen(minusCol, Math.Max(1.3f, 1.4f * s)))
+                    {
+                        mp.StartCap = LineCap.Round;
+                        mp.EndCap = LineCap.Round;
+                        g.DrawLine(mp, minusX - halfArm, midY, minusX + halfArm, midY);
+                    }
+
+                    Color plusCol = _lowBatteryThreshold >= 50
+                        ? Color.FromArgb(80, 80, 80)
+                        : (_alertSubHot == 3 ? Color.White : Muted);
+                    using (Pen pp = new Pen(plusCol, Math.Max(1.3f, 1.4f * s)))
+                    {
+                        pp.StartCap = LineCap.Round;
+                        pp.EndCap = LineCap.Round;
+                        g.DrawLine(pp, plusX - halfArm, midY, plusX + halfArm, midY);
+                        g.DrawLine(pp, plusX, midY - halfArm, plusX, midY + halfArm);
+                    }
+
+                    if (_lowBatteryThreshold > 0)
+                    {
+                        string val = _lowBatteryThreshold + "%";
+                        Font valFont = FontManager.Get(FontKind.MontserratMedium, 16f * s);
+                        float valW = g.MeasureString(val, valFont, int.MaxValue, sf).Width;
+                        Color vc = _alertSubHot == 2 ? Color.White : Accent;
+                        using (SolidBrush vb = new SolidBrush(Lift(vc, lift)))
+                        {
+                            g.DrawString(val, valFont, vb, 201f * s - valW * 0.5f,
+                                         top + 20.8f * s - FontManager.Ascent(valFont), sf);
+                        }
+                    }
+                    else
+                    {
+                        string off = "关闭";
+                        Font offFont = FontManager.Get(FontKind.Chinese, 14f * s);
+                        using (StringFormat sfOff = new StringFormat())
+                        {
+                            sfOff.FormatFlags |= StringFormatFlags.NoWrap;
+                            float offW = g.MeasureString(off, offFont, int.MaxValue, sfOff).Width;
+                            Color oc = _alertSubHot == 2 ? Soft : Muted;
+                            using (SolidBrush ob = new SolidBrush(Lift(oc, lift)))
+                            {
+                                g.DrawString(off, offFont, ob, 201f * s - offW * 0.5f,
+                                             top + 19.8f * s - FontManager.Ascent(offFont), sfOff);
+                            }
+                        }
+                    }
+                    return;
+                }
 
                 if (isQuit)
                 {
