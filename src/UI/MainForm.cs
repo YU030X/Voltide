@@ -152,6 +152,11 @@ namespace Voltide.UI
         /// <summary>How far a card fades when its device stops answering.</summary>
         private const float OfflineDim = 0.78f;
 
+        protected override ImeMode DefaultImeMode
+        {
+            get { return ImeMode.Disable; }
+        }
+
         public MainForm(DeviceManager manager)
         {
             _manager = manager;
@@ -176,6 +181,7 @@ namespace Voltide.UI
             BackColor = BgColor;
             ShowInTaskbar = false;
             DoubleBuffered = true;
+            ImeMode = ImeMode.Disable;
             Text = "Voltide";
 
             SetStyle(ControlStyles.AllPaintingInWmPaint |
@@ -1579,18 +1585,26 @@ namespace Voltide.UI
         {
             base.OnVisibleChanged(e);
 
-            if (_frameThread == null) return;
-
             if (Visible)
             {
-                StartAnimating();
-                SetRate(IdleInterval);
-                Invalidate();
+                if (_frameThread != null)
+                {
+                    StartAnimating();
+                    SetRate(IdleInterval);
+                    Invalidate();
+                }
             }
             else
             {
-                StopAnimating();
-                SnapToRest();
+                if (_frameThread != null)
+                {
+                    StopAnimating();
+                    SnapToRest();
+                }
+
+                BackgroundRenderer.ClearCache();
+                CardRenderer.ClearCache();
+                Program.TrimMemory();
             }
         }
 

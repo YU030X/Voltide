@@ -14,6 +14,18 @@ namespace Voltide
         [DllImport("user32.dll")]
         private static extern bool SetProcessDPIAware();
 
+        [DllImport("imm32.dll")]
+        private static extern bool ImmDisableIME(uint idThread);
+
+        [DllImport("imm32.dll")]
+        private static extern bool ImmDisableTextFrameService(uint idThread);
+
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr GetCurrentProcess();
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool SetProcessWorkingSetSize(IntPtr hProcess, IntPtr dwMinimumWorkingSetSize, IntPtr dwMaximumWorkingSetSize);
+
         /// <summary>
         /// Entry point usable from an in-memory compiled assembly
         /// (Add-Type ... then [Voltide.Program]::Run(@('--show'))).
@@ -51,6 +63,7 @@ namespace Voltide
                         return;
                     }
 
+                    DisableIme();
                     SetProcessDPIAware();
                     Application.EnableVisualStyles();
                     Application.SetCompatibleTextRenderingDefault(false);
@@ -76,6 +89,33 @@ namespace Voltide
             {
                 Log("Main: " + ex);
                 throw;
+            }
+        }
+
+        private static void DisableIme()
+        {
+            try { ImmDisableIME(0xFFFFFFFFu); } catch { }
+            try { ImmDisableTextFrameService(0xFFFFFFFFu); } catch { }
+        }
+
+        public static void TrimMemory()
+        {
+            try
+            {
+                GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, true);
+                GC.WaitForPendingFinalizers();
+                GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, true);
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                SetProcessWorkingSetSize(GetCurrentProcess(), new IntPtr(-1), new IntPtr(-1));
+            }
+            catch
+            {
             }
         }
 

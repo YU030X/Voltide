@@ -355,7 +355,7 @@ namespace Voltide.UI
 
             UseSize(ow + "x" + oh);
 
-            string key = IdOf(snap) + "@" + ow + "x" + oh + "|" + lastPct;
+            string key = IdOf(snap) + "@" + ow + "x" + oh;
             string sig = text.Signature;
 
             Layer layer;
@@ -414,6 +414,43 @@ namespace Voltide.UI
 
             foreach (Region r in _clipCache.Values) r.Dispose();
             _clipCache.Clear();
+        }
+
+        /// <summary>Releases cached card layers and the offscreen liquid buffer when hidden.</summary>
+        public static void ClearCache()
+        {
+            _cacheSize = null;
+
+            foreach (Bitmap b in _underCache.Values)
+            {
+                if (b != null) b.Dispose();
+            }
+            _underCache.Clear();
+
+            foreach (Layer l in _textCache.Values)
+            {
+                if (l != null && l.Bmp != null) l.Bmp.Dispose();
+            }
+            _textCache.Clear();
+
+            foreach (Region r in _clipCache.Values)
+            {
+                if (r != null) r.Dispose();
+            }
+            _clipCache.Clear();
+
+            if (_liquidG != null)
+            {
+                _liquidG.Dispose();
+                _liquidG = null;
+            }
+            if (_liquidBuf != null)
+            {
+                _liquidBuf.Dispose();
+                _liquidBuf = null;
+            }
+            _liquidBufW = 0;
+            _liquidBufH = 0;
         }
 
         // ---------------------------------------------------------- geometry
@@ -542,7 +579,7 @@ namespace Voltide.UI
 
             public string Signature
             {
-                get { return Brand + "|" + Model + "|" + Pct + "|" + Status + "|" + Source + "|" + Time; }
+                get { return Brand + "|" + Model + "|" + Pct + "|" + PctColor.ToArgb().ToString() + "|" + Status + "|" + Source + "|" + Time; }
             }
 
             public static CardText From(DeviceSnapshot snap, float lastPct)

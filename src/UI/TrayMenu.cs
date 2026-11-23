@@ -156,6 +156,12 @@ namespace Voltide.UI
             Margin = Padding.Empty;
             Size = new Size((int)Math.Round(W * scale), (int)Math.Round(TotalHeight() * scale));
             BackColor = Bg;
+            ImeMode = ImeMode.Disable;
+        }
+
+        protected override ImeMode DefaultImeMode
+        {
+            get { return ImeMode.Disable; }
         }
 
         /// <summary>19 + 9 + n*39.</summary>
@@ -785,6 +791,12 @@ namespace Voltide.UI
             DoubleBuffered = true;
             BackColor = Color.FromArgb(15, 15, 15);
             Padding = Padding.Empty;
+            ImeMode = ImeMode.Disable;
+        }
+
+        protected override ImeMode DefaultImeMode
+        {
+            get { return ImeMode.Disable; }
         }
 
         protected override CreateParams CreateParams

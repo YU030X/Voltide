@@ -30,6 +30,7 @@ namespace Voltide.UI
         private int _lowBatteryThreshold = 20;
         private Icon _trayIcon;
         private Icon _formIcon;
+        private bool _initialTrimDone;
 
 
         internal static readonly Color MenuMuted = Color.FromArgb(135, 135, 135); // card status line
@@ -460,6 +461,11 @@ namespace Voltide.UI
                     {
                         _form.UpdateSnapshot(snaps);
                         CheckLowBattery(snaps);
+                        if (!_initialTrimDone)
+                        {
+                            _initialTrimDone = true;
+                            if (!_form.Visible) Program.TrimMemory();
+                        }
                     }));
                 }
                 catch
@@ -521,6 +527,8 @@ namespace Voltide.UI
                 _formIcon = null;
             }
 
+            BackgroundRenderer.ClearCache();
+            CardRenderer.ClearCache();
         }
     }
 }

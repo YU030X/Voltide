@@ -137,6 +137,30 @@ namespace Voltide.UI
 
         // ----------------------------------------------------------- backdrop
 
+        /// <summary>Releases cached panel chrome layers when hidden to tray.</summary>
+        public static void ClearCache()
+        {
+            foreach (Bitmap b in _backdropCache.Values)
+            {
+                if (b != null) b.Dispose();
+            }
+            _backdropCache.Clear();
+
+            foreach (Bitmap b in _wordmarkCache.Values)
+            {
+                if (b != null) b.Dispose();
+            }
+            _wordmarkCache.Clear();
+
+            foreach (Bitmap[] pair in _vignetteCache.Values)
+            {
+                if (pair == null) continue;
+                if (pair.Length > 0 && pair[0] != null) pair[0].Dispose();
+                if (pair.Length > 1 && pair[1] != null) pair[1].Dispose();
+            }
+            _vignetteCache.Clear();
+        }
+
         /// <summary>Gradient + wordmark, 1x, cached per window size.</summary>
         public static Bitmap GetBackdrop(int w, int h)
         {
@@ -155,53 +179,42 @@ namespace Voltide.UI
 
             Bitmap bmp = new Bitmap(w, h, PixelFormat.Format32bppPArgb);
 
-            using (Bitmap big = new Bitmap(w * 2, h * 2, PixelFormat.Format32bppPArgb))
+            using (Graphics g = Graphics.FromImage(bmp))
             {
-                using (Graphics g = Graphics.FromImage(big))
+                g.SmoothingMode = SmoothingMode.HighQuality;
+                g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+
+                g.Clear(Color.Black);
+
+                // Artboard units -> physical pixels.
+                float k = w / (float)DesignW;
+
+                // The design's radial gradient is an ellipse that runs off the
+                // artboard; its edge colour is pure black, so filling the window
+                // black first makes the falloff seamless.
+                float cx = w / 2f;
+                using (GraphicsPath ellipse = new GraphicsPath())
                 {
-                    g.SmoothingMode = SmoothingMode.HighQuality;
-                    g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
-                    g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                    g.ScaleTransform(2f, 2f);
+                    float rx = GradRx * k;
+                    float ry = GradRy * k;
+                    float cy = GradCy * k;
 
-                    g.Clear(Color.Black);
+                    ellipse.AddEllipse(cx - rx, cy - ry, rx * 2f, ry * 2f);
 
-                    // Artboard units -> physical pixels.
-                    float k = w / (float)DesignW;
+                    Color[] edge = new Color[ellipse.PointCount];
+                    for (int i = 0; i < edge.Length; i++) edge[i] = Color.Black;
 
-                    // The design's radial gradient is an ellipse that runs off the
-                    // artboard; its edge colour is pure black, so filling the window
-                    // black first makes the falloff seamless.
-                    float cx = w / 2f;
-                    using (GraphicsPath ellipse = new GraphicsPath())
+                    using (PathGradientBrush brush = new PathGradientBrush(ellipse))
                     {
-                        float rx = GradRx * k;
-                        float ry = GradRy * k;
-                        float cy = GradCy * k;
-
-                        ellipse.AddEllipse(cx - rx, cy - ry, rx * 2f, ry * 2f);
-
-                        Color[] edge = new Color[ellipse.PointCount];
-                        for (int i = 0; i < edge.Length; i++) edge[i] = Color.Black;
-
-                        using (PathGradientBrush brush = new PathGradientBrush(ellipse))
-                        {
-                            brush.CenterColor = GradCenter;
-                            brush.SurroundColors = edge;
-                            g.FillPath(brush, ellipse);
-                        }
+                        brush.CenterColor = GradCenter;
+                        brush.SurroundColors = edge;
+                        g.FillPath(brush, ellipse);
                     }
-
-                    // The wordmark is no longer part of the backdrop: it lives above
-                    // the vignette, so it gets its own cached layer.
                 }
 
-                using (Graphics tg = Graphics.FromImage(bmp))
-                {
-                    tg.InterpolationMode = InterpolationMode.HighQualityBilinear;
-                    tg.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                    tg.DrawImage(big, new Rectangle(0, 0, w, h));
-                }
+                // The wordmark is no longer part of the backdrop: it lives above
+                // the vignette, so it gets its own cached layer.
             }
 
             _backdropCache[key] = bmp;

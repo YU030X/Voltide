@@ -75,10 +75,16 @@ namespace Voltide.UI
             DoubleBuffered = true;
             BackColor = BgColor;
             Opacity = 0.0;
+            ImeMode = ImeMode.Disable;
 
             _timer = new System.Windows.Forms.Timer();
             _timer.Interval = TickMs;
             _timer.Tick += OnAnimTick;
+        }
+
+        protected override ImeMode DefaultImeMode
+        {
+            get { return ImeMode.Disable; }
         }
 
         protected override bool ShowWithoutActivation
